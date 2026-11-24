@@ -1,0 +1,9 @@
+# Instalar con:  pip install -r requirements.txt
+pdfplumber>=0.10          # texto de PDFs digitales + renderizado de páginas (no necesita Poppler)
+pytesseract>=0.3.10       # puente a Tesseract OCR (el programa Tesseract se instala aparte)
+opencv-python-headless>=4.8   # preprocesado de fotos + lectura del QR de AFIP
+numpy>=1.24
+Pillow>=10.0
+lxml>=4.9                 # edición segura del XML interno del Excel
+# Opcional (mejora la lectura de QR en fotos difíciles; en Windows ya trae su DLL):
+# pyzbar
