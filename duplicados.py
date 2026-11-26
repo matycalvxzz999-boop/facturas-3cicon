@@ -14,7 +14,6 @@ from fiscal_config import TIPOS_COMPROBANTE_ARCA, formatear_fecha_ar, formatear_
 
 CERO = Decimal("0.00")
 
-# Confusiones típicas de OCR (0/O, 1/I/L, 5/S, 8/B, 2/Z, 6/G)
 _MAPA_OCR = str.maketrans({
     "O": "0", "Q": "0", "D": "0",
     "I": "1", "L": "1", "|": "1",
@@ -42,7 +41,6 @@ def construir_identidad_fiscal(
     punto_venta: Optional[int | str],
     numero: Optional[int | str],
 ) -> Optional[IdentidadFiscal]:
-    """Normaliza la identidad fiscal canónica: CUIT 11 dígitos válido + tipo ARCA + pto vta + nro sin ceros."""
     cuit = solo_digitos(cuit_emisor)
     if not cuit_valido(cuit):
         return None
@@ -63,7 +61,6 @@ def calcular_sha256(contenido: bytes) -> str:
 
 
 def calcular_dhash_imagen(contenido: bytes, hash_size: int = 8) -> Optional[str]:
-    """Hash perceptual (dHash 64-bit) para detectar fotos/escaneos repetidos aunque cambie el nombre o compresión."""
     try:
         img = Image.open(io.BytesIO(contenido)).convert("L").resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS)
         pixels = list(img.getdata())
@@ -161,7 +158,6 @@ class ResultadoDeteccionDuplicados:
 
 
 def _es_relacion_nc_nd(cod_a: int, cod_b: int) -> bool:
-    """True si uno es Factura y el otro es Nota de Crédito o Débito (no son duplicados entre sí)."""
     ta = TIPOS_COMPROBANTE_ARCA.get(cod_a)
     tb = TIPOS_COMPROBANTE_ARCA.get(cod_b)
     if not ta or not tb:
@@ -174,15 +170,8 @@ def detectar_duplicado(
     existentes: list[RegistroFacturaExistente],
     cfg: Optional[ConfigDuplicados] = None,
 ) -> ResultadoDeteccionDuplicados:
-    """
-    Evalúa una factura candidata contra el histórico existente.
-    - DUPLICADA (exacta): misma identidad fiscal canónica (CUIT + tipo + pto_vta + numero). Bloquea guardado.
-    - POSIBLE_DUPLICADO: señales blandas para revisión humana lado a lado.
-    - UNICA: sin señales.
-    """
     cfg = cfg or ConfigDuplicados()
 
-    # Casos legítimos que nunca deben marcarse como duplicado de factura:
     if candidata.es_pago_parcial:
         id_cand = candidata.identidad
         return ResultadoDeteccionDuplicados(
@@ -216,7 +205,6 @@ def detectar_duplicado(
         id_ex = ex.identidad
         clave_ex = id_ex.clave_canonica() if id_ex else None
 
-        # --- 1. DUPLICADO EXACTO (identidad fiscal canónica) ---
         if clave_cand and clave_ex and clave_cand == clave_ex:
             msg = (
                 f"Duplicado exacto: ya existe {tipo_ex.descripcion if tipo_ex else ex.codigo_tipo} "
@@ -260,7 +248,6 @@ def detectar_duplicado(
             primera_orig_blanda = primera_orig_blanda or ex
             continue
 
-        # --- 2. Mismo CAE con distinta identidad ---
         if candidata.cae and ex.cae and len(candidata.cae) == 14 and candidata.cae == ex.cae:
             senales_blandas.append(
                 SenalDuplicado(
@@ -273,11 +260,9 @@ def detectar_duplicado(
             primera_orig_blanda = primera_orig_blanda or ex
             continue
 
-        # A partir de acá solo comparamos si es el mismo proveedor (mismo CUIT)
         if not candidata.cuit_emisor or candidata.cuit_emisor != ex.cuit_emisor:
             continue
 
-        # Relación legítima Factura <-> NC/ND o distinto tipo (ej. MiPyME vs Factura A)
         if _es_relacion_nc_nd(candidata.codigo_tipo, ex.codigo_tipo) or candidata.codigo_tipo != ex.codigo_tipo:
             continue
 
@@ -285,7 +270,6 @@ def detectar_duplicado(
         dif_dias = abs((candidata.fecha_emision - ex.fecha_emision).days)
         fecha_cercana = dif_dias <= cfg.ventana_dias_fecha_cercana
 
-        # --- 3. Mismo CUIT y mismo número pero distinto importe ---
         if candidata.numero == ex.numero and not mismo_importe:
             senales_blandas.append(
                 SenalDuplicado(
@@ -299,7 +283,6 @@ def detectar_duplicado(
             primera_orig_blanda = primera_orig_blanda or ex
             continue
 
-        # --- 4. Número casi igual (1 o 2 caracteres de diferencia, típico error OCR) en fecha cercana ---
         nro_a = normalizar_numero_ocr(candidata.numero)
         nro_b = normalizar_numero_ocr(ex.numero)
         dist_nro = distancia_levenshtein(nro_a, nro_b)
@@ -316,7 +299,6 @@ def detectar_duplicado(
             primera_orig_blanda = primera_orig_blanda or ex
             continue
 
-        # --- 5. Mismo CUIT, mismo importe y fecha cercana (±N días) con número distinto ---
         if mismo_importe and fecha_cercana and candidata.numero != ex.numero:
             senales_blandas.append(
                 SenalDuplicado(
@@ -347,10 +329,6 @@ def detectar_duplicado(
 
 
 def comparar_qr_con_ia(datos_qr: dict, datos_ia: dict, tolerancia: Decimal = Decimal("0.06")) -> list[str]:
-    """
-    Compara los datos del QR oficial ARCA (fuente principal) contra los extraídos por Gemini/OCR.
-    Devuelve lista de discrepancias para revisión humana (no oculta diferencias).
-    """
     discrepancias: list[str] = []
     if not datos_qr:
         return discrepancias
@@ -369,7 +347,7 @@ def comparar_qr_con_ia(datos_qr: dict, datos_ia: dict, tolerancia: Decimal = Dec
         dif = abs(a_decimal(datos_ia["total"]) - a_decimal(datos_qr["importe"]))
         if dif > tolerancia:
             discrepancias.append(f"Total difiere: QR={datos_qr.get('importe')} vs IA={datos_ia.get('total')} (dif {dif}).")
-    if datos_ia.get("cae") and datos_qr.get("cae") and solo_digitos(datos_ia["cae"]) != solo_digitos(str(datos_qr.get("cae"))):
+    if datos_ia.get("cae") and datos_qr.get("cae") and solo_digitos(datos_ia["cae"]) != solo_digitos(str(datos_qr["cae"])):
         discrepancias.append(f"CAE difiere: QR={datos_qr.get('cae')} vs IA={datos_ia.get('cae')}.")
 
     return discrepancias
